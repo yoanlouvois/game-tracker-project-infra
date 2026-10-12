@@ -33,7 +33,7 @@ variable "instance_type_mysql" {
 
 variable "mysql_ebs_size" {
   type    = number
-  default = 20
+  default = 30
 }
 
 variable "spring_datasource_username" {
