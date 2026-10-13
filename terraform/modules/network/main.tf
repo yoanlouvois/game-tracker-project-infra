@@ -157,3 +157,17 @@ resource "aws_route_table_association" "private_data" {
   subnet_id      = aws_subnet.private_data[count.index].id
   route_table_id = aws_route_table.private_data.id
 }
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+
+  route_table_ids = [aws_route_table.private_app.id]
+
+  tags = {
+    Name        = "${var.project_name}-${var.environment}-s3-endpoint"
+    Project     = var.project_name
+    Environment = var.environment
+  }
+}

@@ -32,3 +32,7 @@ variable "availability_zones" {
   type        = list(string)
   description = "Availability zones utilisées"
 }
+
+variable "aws_region" {
+  type = string
+}
