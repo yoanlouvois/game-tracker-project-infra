@@ -1,9 +1,25 @@
+####################################
+# Ressources persistantes (gérées par terraform-persistent, ici en lecture seule)
+####################################
+
+data "aws_ecr_repository" "front" {
+  name = "${var.project_name}-${var.environment}-front"
+}
+
+data "aws_ecr_repository" "back" {
+  name = "${var.project_name}-${var.environment}-back"
+}
+
+####################################
+# Réseau et sécurité
+####################################
+
 module "network" {
   source = "./modules/network"
 
   project_name = var.project_name
   environment  = var.environment
-  aws_region = var.aws_region
+  aws_region   = var.aws_region
 
   vpc_cidr                  = var.vpc_cidr
   public_subnet_cidrs       = var.public_subnet_cidrs
@@ -20,17 +36,9 @@ module "security" {
   vpc_id       = module.network.vpc_id
 }
 
-data "aws_ecr_repository" "front" {
-  name = "${var.project_name}-${var.environment}-front"
-}
-
-data "aws_ecr_repository" "back" {
-  name = "${var.project_name}-${var.environment}-back"
-}
-
-data "aws_s3_bucket" "mysql_backups" {
-  bucket = "${var.project_name}-${var.environment}-mysql-backups"
-}
+####################################
+# Secrets et IAM
+####################################
 
 module "secrets" {
   source = "./modules/secrets"
@@ -38,13 +46,11 @@ module "secrets" {
   project_name = var.project_name
   environment  = var.environment
 
-  spring_datasource_url      = var.spring_datasource_url
   spring_datasource_username = var.spring_datasource_username
   cloudinary_cloud_name      = var.cloudinary_cloud_name
   cloudinary_api_key         = var.cloudinary_api_key
 
-  spring_datasource_password = var.spring_datasource_password
-  mysql_root_password        = var.mysql_root_password
+  spring_datasource_password = var.rds_password
   cloudinary_api_secret      = var.cloudinary_api_secret
   jwt_secret                 = var.jwt_secret
 }
@@ -59,10 +65,30 @@ module "iam" {
   back_repository_arn  = data.aws_ecr_repository.back.arn
 
   backend_secret_arn = module.secrets.backend_secret_arn
-  mysql_secret_arn   = module.secrets.mysql_secret_arn
-
-  mysql_backups_bucket_arn = data.aws_s3_bucket.mysql_backups.arn
 }
+
+####################################
+# Base de données (RDS)
+####################################
+
+module "database" {
+  source = "./modules/database"
+
+  project_name = var.project_name
+  environment  = var.environment
+
+  private_data_subnet_ids = module.network.private_data_subnet_ids
+  db_sg_id                = module.security.mysql_sg_id
+
+  db_username = var.spring_datasource_username
+  db_password = var.rds_password
+
+  restore_from_snapshot = var.restore_db_from_snapshot
+}
+
+####################################
+# Load balancing et compute
+####################################
 
 module "load_balancing" {
   source = "./modules/load_balancing"
@@ -77,20 +103,20 @@ module "load_balancing" {
 module "compute" {
   source = "./modules/compute"
 
+  # Les instances ne démarrent qu'une fois les droits IAM attachés et la NAT routée
+  depends_on = [module.iam, module.network]
+
   project_name = var.project_name
   environment  = var.environment
   aws_region   = var.aws_region
 
-  private_app_subnet_ids  = module.network.private_app_subnet_ids
-  private_data_subnet_ids = module.network.private_data_subnet_ids
+  private_app_subnet_ids = module.network.private_app_subnet_ids
 
   front_sg_id = module.security.front_sg_id
   back_sg_id  = module.security.back_sg_id
-  mysql_sg_id = module.security.mysql_sg_id
 
   front_instance_profile_name = module.iam.front_instance_profile_name
   back_instance_profile_name  = module.iam.back_instance_profile_name
-  mysql_instance_profile_name = module.iam.mysql_instance_profile_name
 
   front_repository_url = data.aws_ecr_repository.front.repository_url
   back_repository_url  = data.aws_ecr_repository.back.repository_url
@@ -98,12 +124,13 @@ module "compute" {
   front_target_group_arn = module.load_balancing.front_target_group_arn
   back_target_group_arn  = module.load_balancing.back_target_group_arn
 
-  mysql_backups_bucket_name = data.aws_s3_bucket.mysql_backups.bucket
-
+  db_address                 = module.database.db_address
   spring_datasource_username = var.spring_datasource_username
-  spring_datasource_password = var.spring_datasource_password
-  mysql_root_password        = var.mysql_root_password
 }
+
+####################################
+# CDN
+####################################
 
 module "cdn" {
   source = "./modules/cdn"

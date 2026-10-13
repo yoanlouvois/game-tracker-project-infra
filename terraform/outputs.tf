@@ -7,3 +7,7 @@ output "app_url" {
   description = "URL de l'application (HTTPS via CloudFront)"
   value       = "https://${module.cdn.cloudfront_domain_name}"
 }
+
+output "db_address" {
+  value = module.database.db_address
+}

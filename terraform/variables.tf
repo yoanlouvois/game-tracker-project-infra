@@ -38,10 +38,6 @@ variable "private_data_subnet_cidrs" {
   description = "CIDR des subnets privés DATA"
 }
 
-variable "spring_datasource_url" {
-  type = string
-}
-
 variable "spring_datasource_username" {
   type = string
 }
@@ -54,16 +50,6 @@ variable "cloudinary_api_key" {
   type = string
 }
 
-variable "spring_datasource_password" {
-  type      = string
-  sensitive = true
-}
-
-variable "mysql_root_password" {
-  type      = string
-  sensitive = true
-}
-
 variable "cloudinary_api_secret" {
   type      = string
   sensitive = true
@@ -72,4 +58,19 @@ variable "cloudinary_api_secret" {
 variable "jwt_secret" {
   type      = string
   sensitive = true
+}
+
+variable "restore_db_from_snapshot" {
+  type    = bool
+  default = false
+}
+
+variable "rds_password" {
+  type      = string
+  sensitive = true
+
+  validation {
+    condition     = length(var.rds_password) >= 8 && length(var.rds_password) <= 41 && !can(regex("[/@\" ]", var.rds_password))
+    error_message = "Le mot de passe RDS doit faire entre 8 et 41 caractères, sans / @ \" ni espace."
+  }
 }

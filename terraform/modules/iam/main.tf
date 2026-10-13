@@ -34,11 +34,6 @@ resource "aws_iam_role_policy_attachment" "front_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-resource "aws_iam_role_policy_attachment" "mysql_ssm" {
-  role       = aws_iam_role.mysql_ec2.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
 data "aws_iam_policy_document" "front_ec2_policy" {
   statement {
     actions = [
@@ -136,51 +131,4 @@ resource "aws_iam_role_policy_attachment" "back_ec2" {
 resource "aws_iam_instance_profile" "back_ec2" {
   name = "${var.project_name}-${var.environment}-back-instance-profile"
   role = aws_iam_role.back_ec2.name
-}
-
-####################################
-# MySQL EC2 Role
-####################################
-
-resource "aws_iam_role" "mysql_ec2" {
-  name               = "${var.project_name}-${var.environment}-mysql-ec2-role"
-  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
-}
-
-data "aws_iam_policy_document" "mysql_ec2_policy" {
-  statement {
-    actions = [
-      "secretsmanager:GetSecretValue"
-    ]
-
-    resources = [var.mysql_secret_arn]
-  }
-
-  statement {
-    actions = [
-      "s3:PutObject",
-      "s3:GetObject",
-      "s3:ListBucket"
-    ]
-
-    resources = [
-      var.mysql_backups_bucket_arn,
-      "${var.mysql_backups_bucket_arn}/*"
-    ]
-  }
-}
-
-resource "aws_iam_policy" "mysql_ec2" {
-  name   = "${var.project_name}-${var.environment}-mysql-ec2-policy"
-  policy = data.aws_iam_policy_document.mysql_ec2_policy.json
-}
-
-resource "aws_iam_role_policy_attachment" "mysql_ec2" {
-  role       = aws_iam_role.mysql_ec2.name
-  policy_arn = aws_iam_policy.mysql_ec2.arn
-}
-
-resource "aws_iam_instance_profile" "mysql_ec2" {
-  name = "${var.project_name}-${var.environment}-mysql-instance-profile"
-  role = aws_iam_role.mysql_ec2.name
 }

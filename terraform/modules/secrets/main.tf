@@ -1,9 +1,3 @@
-resource "aws_ssm_parameter" "spring_datasource_url" {
-  name  = "/${var.project_name}/${var.environment}/spring/datasource/url"
-  type  = "String"
-  value = var.spring_datasource_url
-}
-
 resource "aws_ssm_parameter" "spring_datasource_username" {
   name  = "/${var.project_name}/${var.environment}/spring/datasource/username"
   type  = "String"
@@ -23,7 +17,7 @@ resource "aws_ssm_parameter" "cloudinary_api_key" {
 }
 
 resource "aws_secretsmanager_secret" "backend" {
-  name = "${var.project_name}/${var.environment}/backend"
+  name                    = "${var.project_name}/${var.environment}/backend"
   recovery_window_in_days = 0
 }
 
@@ -34,18 +28,5 @@ resource "aws_secretsmanager_secret_version" "backend" {
     SPRING_DATASOURCE_PASSWORD = var.spring_datasource_password
     CLOUDINARY_API_SECRET      = var.cloudinary_api_secret
     JWT_SECRET                 = var.jwt_secret
-  })
-}
-
-resource "aws_secretsmanager_secret" "mysql" {
-  name = "${var.project_name}/${var.environment}/mysql"
-  recovery_window_in_days = 0
-}
-
-resource "aws_secretsmanager_secret_version" "mysql" {
-  secret_id = aws_secretsmanager_secret.mysql.id
-
-  secret_string = jsonencode({
-    MYSQL_ROOT_PASSWORD = var.mysql_root_password
   })
 }

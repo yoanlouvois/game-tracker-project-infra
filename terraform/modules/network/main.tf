@@ -89,6 +89,10 @@ resource "aws_nat_gateway" "main" {
   }
 }
 
+####################################
+# Route table publique
+####################################
+
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -104,6 +108,10 @@ resource "aws_route" "public_internet" {
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = aws_internet_gateway.main.id
 }
+
+####################################
+# Route table private_app (front + back) : sortie via NAT
+####################################
 
 resource "aws_route_table" "private_app" {
   vpc_id = aws_vpc.main.id
@@ -121,6 +129,10 @@ resource "aws_route" "private_app_nat" {
   nat_gateway_id         = aws_nat_gateway.main.id
 }
 
+####################################
+# Route table private_data (RDS) : aucune sortie, uniquement le trafic local du VPC
+####################################
+
 resource "aws_route_table" "private_data" {
   vpc_id = aws_vpc.main.id
 
@@ -131,11 +143,9 @@ resource "aws_route_table" "private_data" {
   }
 }
 
-resource "aws_route" "private_data_nat" {
-  route_table_id         = aws_route_table.private_data.id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.main.id
-}
+####################################
+# Associations
+####################################
 
 resource "aws_route_table_association" "public" {
   count = length(aws_subnet.public)
@@ -157,6 +167,10 @@ resource "aws_route_table_association" "private_data" {
   subnet_id      = aws_subnet.private_data[count.index].id
   route_table_id = aws_route_table.private_data.id
 }
+
+####################################
+# VPC endpoint S3 (Gateway) : front + back
+####################################
 
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.main.id

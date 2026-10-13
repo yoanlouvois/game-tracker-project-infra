@@ -17,11 +17,3 @@ variable "back_repository_arn" {
 variable "backend_secret_arn" {
   type = string
 }
-
-variable "mysql_secret_arn" {
-  type = string
-}
-
-variable "mysql_backups_bucket_arn" {
-  type = string
-}

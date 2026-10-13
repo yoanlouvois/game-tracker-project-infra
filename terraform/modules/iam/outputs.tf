@@ -5,7 +5,3 @@ output "front_instance_profile_name" {
 output "back_instance_profile_name" {
   value = aws_iam_instance_profile.back_ec2.name
 }
-
-output "mysql_instance_profile_name" {
-  value = aws_iam_instance_profile.mysql_ec2.name
-}

@@ -9,67 +9,6 @@ data "aws_ami" "amazon_linux_2023" {
 }
 
 ####################################
-# EC2 MySQL
-####################################
-
-resource "aws_instance" "mysql" {
-  ami                         = data.aws_ami.amazon_linux_2023.id
-  instance_type               = var.instance_type_mysql
-  subnet_id                   = var.private_data_subnet_ids[0]
-  vpc_security_group_ids      = [var.mysql_sg_id]
-  iam_instance_profile        = var.mysql_instance_profile_name
-  associate_public_ip_address = false
-
-  user_data = <<-EOF
-#!/bin/bash
-set -e
-
-dnf update -y
-dnf install -y docker awscli cronie
-systemctl enable docker
-systemctl start docker
-systemctl enable crond
-systemctl start crond
-
-mkdir -p /data/mysql
-
-docker run -d \
-  --name gametracker-mysql \
-  --restart=always \
-  -p 3306:3306 \
-  -e MYSQL_DATABASE=db_pgt \
-  -e MYSQL_USER="${var.spring_datasource_username}" \
-  -e MYSQL_PASSWORD="${var.spring_datasource_password}" \
-  -e MYSQL_ROOT_PASSWORD="${var.mysql_root_password}" \
-  -v /data/mysql:/var/lib/mysql \
-  mysql:8.4
-
-cat > /usr/local/bin/backup_mysql.sh <<'SCRIPT'
-#!/bin/bash
-DATE=$(date +%Y-%m-%d-%H-%M)
-docker exec gametracker-mysql mysqldump -uroot -p${var.mysql_root_password} db_pgt > /tmp/db_pgt-$DATE.sql
-aws s3 cp /tmp/db_pgt-$DATE.sql s3://${var.mysql_backups_bucket_name}/mysql/db_pgt-$DATE.sql
-rm -f /tmp/db_pgt-$DATE.sql
-SCRIPT
-
-chmod +x /usr/local/bin/backup_mysql.sh
-echo "0 2 * * * root /usr/local/bin/backup_mysql.sh" > /etc/cron.d/mysql-backup
-EOF
-
-  root_block_device {
-    volume_size           = var.mysql_ebs_size
-    volume_type           = "gp3"
-    delete_on_termination = false
-  }
-
-  tags = {
-    Name        = "${var.project_name}-${var.environment}-mysql"
-    Project     = var.project_name
-    Environment = var.environment
-  }
-}
-
-####################################
 # Launch Template Front
 ####################################
 
@@ -207,9 +146,9 @@ docker run -d \
   --name gametracker-back \
   --restart=always \
   -p 8081:8081 \
-  -e SPRING_DATASOURCE_URL="jdbc:mysql://${aws_instance.mysql.private_ip}:3306/db_pgt?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true" \
+  -e SPRING_DATASOURCE_URL="jdbc:mysql://${var.db_address}:3306/db_pgt?sslMode=REQUIRED&serverTimezone=UTC" \
   -e SPRING_DATASOURCE_USERNAME="${var.spring_datasource_username}" \
-  -e SPRING_DATASOURCE_PASSWORD="${var.spring_datasource_password}" \
+  -e SPRING_DATASOURCE_PASSWORD="$SPRING_DATASOURCE_PASSWORD" \
   -e CLOUDINARY_CLOUD_NAME="$CLOUDINARY_CLOUD_NAME" \
   -e CLOUDINARY_API_KEY="$CLOUDINARY_API_KEY" \
   -e CLOUDINARY_API_SECRET="$CLOUDINARY_API_SECRET" \
