@@ -65,7 +65,7 @@ Utilisateur ──HTTPS──▶ CloudFront ──HTTP:80──▶ ALB ──▶
 ```text
 GameTrackerProject-Infra/
 ├── docs/
-│   └── architecture.drawio.svg     # Schéma d'architecture (modifiable dans draw.io)
+│   └── gametracker-infra.drawio     # Schéma d'architecture (modifiable dans draw.io)
 │
 ├── terraform-persistent/           # Stack persistante : jamais détruite
 │   ├── main.tf                     # Appelle les modules registry et storage
