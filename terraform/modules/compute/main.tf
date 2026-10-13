@@ -132,9 +132,9 @@ EOF
 
 resource "aws_autoscaling_group" "front" {
   name                = "${var.project_name}-${var.environment}-front-asg"
-  desired_capacity    = 1
-  min_size            = 1
-  max_size            = 2
+  desired_capacity    = 2
+  min_size            = 2
+  max_size            = 4
   vpc_zone_identifier = var.private_app_subnet_ids
 
   target_group_arns = [var.front_target_group_arn]

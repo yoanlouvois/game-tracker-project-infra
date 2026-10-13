@@ -1,15 +1,9 @@
-output "front_repository_url" {
-  value = module.registry.front_repository_url
+output "alb_dns_name" {
+  description = "DNS de l'ALB"
+  value       = module.load_balancing.alb_dns_name
 }
 
-output "back_repository_url" {
-  value = module.registry.back_repository_url
-}
-
-output "front_repository_arn" {
-  value = module.registry.front_repository_arn
-}
-
-output "back_repository_arn" {
-  value = module.registry.back_repository_arn
+output "app_url" {
+  description = "URL de l'application"
+  value       = "http://${module.load_balancing.alb_dns_name}"
 }

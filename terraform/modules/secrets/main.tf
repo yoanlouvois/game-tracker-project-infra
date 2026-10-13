@@ -24,6 +24,7 @@ resource "aws_ssm_parameter" "cloudinary_api_key" {
 
 resource "aws_secretsmanager_secret" "backend" {
   name = "${var.project_name}/${var.environment}/backend"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "backend" {
@@ -38,6 +39,7 @@ resource "aws_secretsmanager_secret_version" "backend" {
 
 resource "aws_secretsmanager_secret" "mysql" {
   name = "${var.project_name}/${var.environment}/mysql"
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "mysql" {

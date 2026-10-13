@@ -19,18 +19,16 @@ module "security" {
   vpc_id       = module.network.vpc_id
 }
 
-module "registry" {
-  source = "./modules/registry"
-
-  project_name = var.project_name
-  environment  = var.environment
+data "aws_ecr_repository" "front" {
+  name = "${var.project_name}-${var.environment}-front"
 }
 
-module "storage" {
-  source = "./modules/storage"
+data "aws_ecr_repository" "back" {
+  name = "${var.project_name}-${var.environment}-back"
+}
 
-  project_name = var.project_name
-  environment  = var.environment
+data "aws_s3_bucket" "mysql_backups" {
+  bucket = "${var.project_name}-${var.environment}-mysql-backups"
 }
 
 module "secrets" {
@@ -56,13 +54,13 @@ module "iam" {
   project_name = var.project_name
   environment  = var.environment
 
-  front_repository_arn = module.registry.front_repository_arn
-  back_repository_arn  = module.registry.back_repository_arn
+  front_repository_arn = data.aws_ecr_repository.front.arn
+  back_repository_arn  = data.aws_ecr_repository.back.arn
 
   backend_secret_arn = module.secrets.backend_secret_arn
   mysql_secret_arn   = module.secrets.mysql_secret_arn
 
-  mysql_backups_bucket_arn = module.storage.mysql_backups_bucket_arn
+  mysql_backups_bucket_arn = data.aws_s3_bucket.mysql_backups.arn
 
   github_repositories = var.github_repositories
 }
@@ -95,13 +93,13 @@ module "compute" {
   back_instance_profile_name  = module.iam.back_instance_profile_name
   mysql_instance_profile_name = module.iam.mysql_instance_profile_name
 
-  front_repository_url = module.registry.front_repository_url
-  back_repository_url  = module.registry.back_repository_url
+  front_repository_url = data.aws_ecr_repository.front.repository_url
+  back_repository_url  = data.aws_ecr_repository.back.repository_url
 
   front_target_group_arn = module.load_balancing.front_target_group_arn
   back_target_group_arn  = module.load_balancing.back_target_group_arn
 
-  mysql_backups_bucket_name = module.storage.mysql_backups_bucket_name
+  mysql_backups_bucket_name = data.aws_s3_bucket.mysql_backups.bucket
 
   spring_datasource_username = var.spring_datasource_username
   spring_datasource_password = var.spring_datasource_password
