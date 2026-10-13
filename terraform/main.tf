@@ -62,8 +62,6 @@ module "iam" {
   mysql_secret_arn   = module.secrets.mysql_secret_arn
 
   mysql_backups_bucket_arn = data.aws_s3_bucket.mysql_backups.arn
-
-  github_repositories = var.github_repositories
 }
 
 module "load_balancing" {

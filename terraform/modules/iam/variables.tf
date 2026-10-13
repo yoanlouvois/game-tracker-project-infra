@@ -25,8 +25,3 @@ variable "mysql_secret_arn" {
 variable "mysql_backups_bucket_arn" {
   type = string
 }
-
-variable "github_repositories" {
-  type        = list(string)
-  description = "Liste des repos GitHub autorisés, ex: yoanlouvois/GameTrackerProject-Backend"
-}
