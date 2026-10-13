@@ -104,3 +104,11 @@ module "compute" {
   spring_datasource_password = var.spring_datasource_password
   mysql_root_password        = var.mysql_root_password
 }
+
+module "cdn" {
+  source = "./modules/cdn"
+
+  project_name = var.project_name
+  environment  = var.environment
+  alb_dns_name = module.load_balancing.alb_dns_name
+}
