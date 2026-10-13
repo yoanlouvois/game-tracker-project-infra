@@ -12,6 +12,7 @@ Module Network
     ├── Subnets private_app ×2 (a, b) — front + back
     │   └── 1 route table "private-app", partagée par les 2 subnets
     │       └── route 0.0.0.0/0 → NAT Gateway
+    |       └── route S3 (liste de préfixes pl-...) → VPC endpoint S3 (Gateway)
     │
     └── Subnets private_data ×2 (a, b) — MySQL
         └── 1 route table "private-data", partagée par les 2 subnets
@@ -20,8 +21,8 @@ Module Network
 Module Security 
 
     SG ALB (alb-sg)
-    ├── in  : TCP 80  depuis 0.0.0.0/0 (Internet)
-    ├── in  : TCP 443 depuis 0.0.0.0/0 (Internet)
+    ├── in  : TCP 80 uniquement depuis CloudFront
+    │         (liste de préfixes gérée par AWS : com.amazonaws.global.cloudfront.origin-facing)
     └── out : tout
 
     SG Front (front-sg)
@@ -90,14 +91,6 @@ Module IAM
         ├── lecture du secret gametracker/dev/mysql
         └── S3 Put/Get/List sur le bucket mysql-backups
 
-    GitHub Actions
-    ├── Provider OIDC token.actions.githubusercontent.com
-    └── Rôle github-actions (assumable par OIDC)
-        ├── conditions : audience sts.amazonaws.com + repos listés dans github_repositories
-        └── policy github-actions
-            ├── ecr:GetAuthorizationToken
-            └── push/pull sur les repos front et back
-
 Module Load Balancing 
 
     ALB "gametracker-dev-alb" (public, dans les 2 subnets publics, SG alb)
@@ -123,7 +116,7 @@ Module Compute
         │   └── crée la base db_pgt + l'utilisateur applicatif
         └── cron 02:00 UTC : mysqldump → S3 mysql-backups/mysql/
 
-    Launch template Front + ASG front (min 1 / desired 1 / max 2, zones a+b)
+    Launch template Front + ASG front (min 2 / desired 2 / max 2, zones a+b)
     ├── t3 (instance_type_app), 30 Go, SG front, rôle front
     ├── user data : docker login ECR → pull front:latest → run sur le port 80
     └── enregistré dans le TG front, health check ELB, grâce 120 s
@@ -134,3 +127,22 @@ Module Compute
     │   → pull back:latest → run sur le port 8081
     │   → URL JDBC construite avec l'IP privée de l'instance MySQL
     └── enregistré dans le TG back, health check ELB, grâce 180 s
+
+Module CDN
+
+    Distribution CloudFront (xxxx.cloudfront.net)
+    ├── HTTPS côté utilisateur : certificat *.cloudfront.net fourni par AWS
+    │   └── HTTP → HTTPS : redirection automatique
+    ├── Price class 100 (points de présence Europe + Amérique du Nord)
+    ├── Origine : ALB, en HTTP uniquement (port 80)
+    │
+    ├── Comportement par défaut (front Angular)
+    │   ├── méthodes : GET, HEAD, OPTIONS
+    │   ├── cache : Managed-CachingOptimized
+    │   └── compression activée
+    │
+    └── Comportement /gametracker/* (API Spring)
+        ├── méthodes : toutes (GET, POST, PUT, PATCH, DELETE…)
+        ├── cache : Managed-CachingDisabled (jamais mis en cache)
+        └── transmission : Managed-AllViewerExceptHostHeader
+            (en-têtes dont JWT, paramètres de requête, cookies, body)
