@@ -1,0 +1,136 @@
+Module Network 
+
+    VPC (10.0.0.0/16, DNS activé)
+    ├── Internet Gateway (rattachée au VPC)
+    │
+    ├── Subnets publics ×2 (eu-west-3a, eu-west-3b) — IP publique auto
+    │   └── 1 route table "public", partagée par les 2 subnets
+    │       └── route 0.0.0.0/0 → Internet Gateway
+    │   └── NAT Gateway (uniquement dans public[0], eu-west-3a)
+    │       └── Elastic IP
+    │
+    ├── Subnets private_app ×2 (a, b) — front + back
+    │   └── 1 route table "private-app", partagée par les 2 subnets
+    │       └── route 0.0.0.0/0 → NAT Gateway
+    │
+    └── Subnets private_data ×2 (a, b) — MySQL
+        └── 1 route table "private-data", partagée par les 2 subnets
+            └── route 0.0.0.0/0 → NAT Gateway
+
+Module Security 
+
+    SG ALB (alb-sg)
+    ├── in  : TCP 80  depuis 0.0.0.0/0 (Internet)
+    ├── in  : TCP 443 depuis 0.0.0.0/0 (Internet)
+    └── out : tout
+
+    SG Front (front-sg)
+    ├── in  : TCP 80   uniquement depuis le SG ALB
+    └── out : tout
+
+    SG Back (back-sg)
+    ├── in  : TCP 8081 uniquement depuis le SG ALB
+    └── out : tout
+
+    SG MySQL (mysql-sg)
+    ├── in  : TCP 3306 uniquement depuis le SG Back
+    └── out : tout
+
+Module Registry 
+
+    Repository ECR "gametracker-dev-front"
+    ├── tags mutables (on peut écraser :latest)
+    ├── scan de vulnérabilités à chaque push (scan basique)
+    └── chiffrement AES256 (par défaut, implicite)
+
+    Repository ECR "gametracker-dev-back"
+    └── même configuration
+
+Module Storage 
+
+    Bucket S3 "gametracker-dev-mysql-backups"
+    ├── Public access block : les 4 protections activées (aucun accès public possible)
+    ├── Versioning : activé
+    ├── Chiffrement : SSE-S3 (AES256, clés gérées par AWS)
+    └── Lifecycle "expire-old-backups" (s'applique à tout le bucket)
+        ├── version courante → passe en "non courante" après 30 jours
+        └── version non courante → supprimée définitivement 7 jours plus tard
+
+Module Secret 
+
+    SSM Parameter Store (type String, en clair)
+    ├── /gametracker/dev/spring/datasource/url
+    ├── /gametracker/dev/spring/datasource/username
+    ├── /gametracker/dev/cloudinary/cloud-name
+    └── /gametracker/dev/cloudinary/api-key
+
+    Secrets Manager (chiffré, KMS par défaut)
+    ├── gametracker/dev/backend  → JSON { SPRING_DATASOURCE_PASSWORD, CLOUDINARY_API_SECRET, JWT_SECRET }
+    └── gametracker/dev/mysql    → JSON { MYSQL_ROOT_PASSWORD }
+
+Module IAM 
+
+    Rôle Front EC2 (+ instance profile)
+    ├── AmazonSSMManagedInstanceCore  → accès via Session Manager
+    └── policy front-ec2
+        ├── ecr:GetAuthorizationToken (sur *, obligatoire)
+        └── pull d'images, uniquement sur le repo front
+
+    Rôle Back EC2 (+ instance profile)
+    ├── AmazonSSMManagedInstanceCore
+    └── policy back-ec2
+        ├── ecr:GetAuthorizationToken
+        ├── pull d'images, uniquement sur le repo back
+        ├── lecture SSM sur /gametracker/dev/*
+        └── lecture du secret gametracker/dev/backend
+
+    Rôle MySQL EC2 (+ instance profile)
+    ├── AmazonSSMManagedInstanceCore
+    └── policy mysql-ec2
+        ├── lecture du secret gametracker/dev/mysql
+        └── S3 Put/Get/List sur le bucket mysql-backups
+
+    GitHub Actions
+    ├── Provider OIDC token.actions.githubusercontent.com
+    └── Rôle github-actions (assumable par OIDC)
+        ├── conditions : audience sts.amazonaws.com + repos listés dans github_repositories
+        └── policy github-actions
+            ├── ecr:GetAuthorizationToken
+            └── push/pull sur les repos front et back
+
+Module Load Balancing 
+
+    ALB "gametracker-dev-alb" (public, dans les 2 subnets publics, SG alb)
+    └── Listener HTTP :80
+        ├── Règle priorité 10 : chemin /gametracker/* → TG back
+        └── Action par défaut : tout le reste → TG front
+
+    TG front "gametracker-dev-front-tg"  (HTTP :80, cibles = instances)
+    └── health check : GET /  → 200-399, toutes les 30 s
+
+    TG back "gametracker-dev-back-tg"  (HTTP :8081, cibles = instances)
+    └── health check : GET /gametracker/v1/game/all → 200-399, toutes les 30 s
+
+Module Compute 
+
+    Data source AMI : Amazon Linux 2023 la plus récente (x86_64)
+
+    EC2 MySQL (1 instance fixe, subnet private_data[0], zone a)
+    ├── disque 30 Go gp3 (conservé à la suppression)
+    └── user data :
+        ├── installe docker, awscli, cron
+        ├── lance mysql:8.4 (Docker Hub), données dans /data/mysql
+        │   └── crée la base db_pgt + l'utilisateur applicatif
+        └── cron 02:00 UTC : mysqldump → S3 mysql-backups/mysql/
+
+    Launch template Front + ASG front (min 1 / desired 1 / max 2, zones a+b)
+    ├── t3 (instance_type_app), 30 Go, SG front, rôle front
+    ├── user data : docker login ECR → pull front:latest → run sur le port 80
+    └── enregistré dans le TG front, health check ELB, grâce 120 s
+
+    Launch template Back + ASG back (min 2 / desired 2 / max 4, zones a+b)
+    ├── t3, 30 Go, SG back, rôle back
+    ├── user data : docker login ECR → lit le secret et les paramètres SSM
+    │   → pull back:latest → run sur le port 8081
+    │   → URL JDBC construite avec l'IP privée de l'instance MySQL
+    └── enregistré dans le TG back, health check ELB, grâce 180 s
