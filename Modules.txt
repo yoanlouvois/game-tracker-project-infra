@@ -1,148 +1,86 @@
-Module Network 
+Organisation
+    terraform-persistent/  → ECR + bucket S3 (jamais détruits)
+    terraform/             → tout le reste (détruit en fin de séance)
+
+Module Network
 
     VPC (10.0.0.0/16, DNS activé)
-    ├── Internet Gateway (rattachée au VPC)
+    ├── Internet Gateway
     │
-    ├── Subnets publics ×2 (eu-west-3a, eu-west-3b) — IP publique auto
-    │   └── 1 route table "public", partagée par les 2 subnets
-    │       └── route 0.0.0.0/0 → Internet Gateway
-    │   └── NAT Gateway (uniquement dans public[0], eu-west-3a)
-    │       └── Elastic IP
+    ├── Subnets publics ×2 (eu-west-3a, eu-west-3b)
+    │   └── route table "public" : 0.0.0.0/0 → Internet Gateway
+    │   └── NAT Gateway (dans public[0], zone a) + Elastic IP
     │
     ├── Subnets private_app ×2 (a, b) — front + back
-    │   └── 1 route table "private-app", partagée par les 2 subnets
-    │       └── route 0.0.0.0/0 → NAT Gateway
-    |       └── route S3 (liste de préfixes pl-...) → VPC endpoint S3 (Gateway)
+    │   └── route table "private-app"
+    │       ├── 0.0.0.0/0 → NAT Gateway
+    │       └── S3 (pl-...) → VPC endpoint S3 (Gateway)
     │
-    └── Subnets private_data ×2 (a, b) — MySQL
-        └── 1 route table "private-data", partagée par les 2 subnets
-            └── route 0.0.0.0/0 → NAT Gateway
+    └── Subnets private_data ×2 (a, b) — RDS
+        └── route table "private-data" : aucune sortie (trafic VPC uniquement)
 
-Module Security 
+Module Security
 
-    SG ALB (alb-sg)
-    ├── in  : TCP 80 uniquement depuis CloudFront
-    │         (liste de préfixes gérée par AWS : com.amazonaws.global.cloudfront.origin-facing)
-    └── out : tout
+    SG ALB   : in TCP 80 depuis CloudFront uniquement      | out : tout
+    SG Front : in TCP 80 depuis SG ALB                     | out : tout
+    SG Back  : in TCP 8081 depuis SG ALB                   | out : tout
+    SG MySQL : in TCP 3306 depuis SG Back (utilisé par RDS) | out : tout
 
-    SG Front (front-sg)
-    ├── in  : TCP 80   uniquement depuis le SG ALB
-    └── out : tout
+Module Registry (stack persistante)
 
-    SG Back (back-sg)
-    ├── in  : TCP 8081 uniquement depuis le SG ALB
-    └── out : tout
+    ECR "gametracker-dev-front" et "gametracker-dev-back"
+    ├── tags mutables, scan à chaque push, chiffrement AES256
+    └── lifecycle : non taggées supprimées après 7 j, 10 images max
 
-    SG MySQL (mysql-sg)
-    ├── in  : TCP 3306 uniquement depuis le SG Back
-    └── out : tout
+Module Storage (stack persistante)
 
-Module Registry 
+    Bucket S3 "gametracker-dev-mysql-backups" (n'est plus alimenté depuis RDS)
+    ├── accès public bloqué, versioning, chiffrement SSE-S3
+    └── lifecycle : expiration 30 j + 7 j, nettoyage des delete markers
 
-    Repository ECR "gametracker-dev-front"
-    ├── tags mutables (on peut écraser :latest)
-    ├── scan de vulnérabilités à chaque push (scan basique)
-    └── chiffrement AES256 (par défaut, implicite)
+Module Secrets
 
-    Repository ECR "gametracker-dev-back"
-    └── même configuration
-
-Module Storage 
-
-    Bucket S3 "gametracker-dev-mysql-backups"
-    ├── Public access block : les 4 protections activées (aucun accès public possible)
-    ├── Versioning : activé
-    ├── Chiffrement : SSE-S3 (AES256, clés gérées par AWS)
-    └── Lifecycle "expire-old-backups" (s'applique à tout le bucket)
-        ├── version courante → passe en "non courante" après 30 jours
-        └── version non courante → supprimée définitivement 7 jours plus tard
-
-Module Secret 
-
-    SSM Parameter Store (type String, en clair)
-    ├── /gametracker/dev/spring/datasource/url
+    SSM Parameter Store
     ├── /gametracker/dev/spring/datasource/username
     ├── /gametracker/dev/cloudinary/cloud-name
     └── /gametracker/dev/cloudinary/api-key
 
-    Secrets Manager (chiffré, KMS par défaut)
-    ├── gametracker/dev/backend  → JSON { SPRING_DATASOURCE_PASSWORD, CLOUDINARY_API_SECRET, JWT_SECRET }
-    └── gametracker/dev/mysql    → JSON { MYSQL_ROOT_PASSWORD }
+    Secrets Manager (suppression immédiate au destroy)
+    └── gametracker/dev/backend → { SPRING_DATASOURCE_PASSWORD (RDS), CLOUDINARY_API_SECRET, JWT_SECRET }
 
-Module IAM 
+Module IAM
 
-    Rôle Front EC2 (+ instance profile)
-    ├── AmazonSSMManagedInstanceCore  → accès via Session Manager
-    └── policy front-ec2
-        ├── ecr:GetAuthorizationToken (sur *, obligatoire)
-        └── pull d'images, uniquement sur le repo front
+    Rôle Front EC2 : Session Manager + pull ECR (repo front)
+    Rôle Back EC2  : Session Manager + pull ECR (repo back)
+                     + lecture SSM /gametracker/dev/* + lecture secret backend
 
-    Rôle Back EC2 (+ instance profile)
-    ├── AmazonSSMManagedInstanceCore
-    └── policy back-ec2
-        ├── ecr:GetAuthorizationToken
-        ├── pull d'images, uniquement sur le repo back
-        ├── lecture SSM sur /gametracker/dev/*
-        └── lecture du secret gametracker/dev/backend
+Module Database (RDS)
 
-    Rôle MySQL EC2 (+ instance profile)
-    ├── AmazonSSMManagedInstanceCore
-    └── policy mysql-ec2
-        ├── lecture du secret gametracker/dev/mysql
-        └── S3 Put/Get/List sur le bucket mysql-backups
+    Subnet group : les 2 subnets private_data
+    Instance RDS "gametracker-dev-db"
+    ├── MySQL 8.4, db.t4g.micro, 20 Go gp3 chiffré, une seule zone
+    ├── non accessible publiquement, SG MySQL
+    ├── base db_pgt
+    └── destroy → snapshot final ; apply suivant → restauration du dernier snapshot
 
-Module Load Balancing 
+Module Load Balancing
 
-    ALB "gametracker-dev-alb" (public, dans les 2 subnets publics, SG alb)
-    └── Listener HTTP :80
-        ├── Règle priorité 10 : chemin /gametracker/* → TG back
-        └── Action par défaut : tout le reste → TG front
+    ALB public (2 subnets publics), listener HTTP :80
+    ├── /gametracker/* → TG back (:8081, health check /gametracker/v1/game/all)
+    └── reste          → TG front (:80, health check /)
 
-    TG front "gametracker-dev-front-tg"  (HTTP :80, cibles = instances)
-    └── health check : GET /  → 200-399, toutes les 30 s
+Module Compute
 
-    TG back "gametracker-dev-back-tg"  (HTTP :8081, cibles = instances)
-    └── health check : GET /gametracker/v1/game/all → 200-399, toutes les 30 s
+    ASG Front (min 2 / desired 2 / max 2, zones a+b)
+    └── user data : login ECR → pull front:latest → run :80
 
-Module Compute 
-
-    Data source AMI : Amazon Linux 2023 la plus récente (x86_64)
-
-    EC2 MySQL (1 instance fixe, subnet private_data[0], zone a)
-    ├── disque 30 Go gp3 (conservé à la suppression)
-    └── user data :
-        ├── installe docker, awscli, cron
-        ├── lance mysql:8.4 (Docker Hub), données dans /data/mysql
-        │   └── crée la base db_pgt + l'utilisateur applicatif
-        └── cron 02:00 UTC : mysqldump → S3 mysql-backups/mysql/
-
-    Launch template Front + ASG front (min 2 / desired 2 / max 2, zones a+b)
-    ├── t3 (instance_type_app), 30 Go, SG front, rôle front
-    ├── user data : docker login ECR → pull front:latest → run sur le port 80
-    └── enregistré dans le TG front, health check ELB, grâce 120 s
-
-    Launch template Back + ASG back (min 2 / desired 2 / max 4, zones a+b)
-    ├── t3, 30 Go, SG back, rôle back
-    ├── user data : docker login ECR → lit le secret et les paramètres SSM
-    │   → pull back:latest → run sur le port 8081
-    │   → URL JDBC construite avec l'IP privée de l'instance MySQL
-    └── enregistré dans le TG back, health check ELB, grâce 180 s
+    ASG Back (min 2 / desired 2 / max 4, zones a+b)
+    └── user data : login ECR → lecture secret + SSM → pull back:latest → run :8081
+                    → JDBC vers l'endpoint RDS (SSL), mot de passe lu dans Secrets Manager
 
 Module CDN
 
-    Distribution CloudFront (xxxx.cloudfront.net)
-    ├── HTTPS côté utilisateur : certificat *.cloudfront.net fourni par AWS
-    │   └── HTTP → HTTPS : redirection automatique
-    ├── Price class 100 (points de présence Europe + Amérique du Nord)
-    ├── Origine : ALB, en HTTP uniquement (port 80)
-    │
-    ├── Comportement par défaut (front Angular)
-    │   ├── méthodes : GET, HEAD, OPTIONS
-    │   ├── cache : Managed-CachingOptimized
-    │   └── compression activée
-    │
-    └── Comportement /gametracker/* (API Spring)
-        ├── méthodes : toutes (GET, POST, PUT, PATCH, DELETE…)
-        ├── cache : Managed-CachingDisabled (jamais mis en cache)
-        └── transmission : Managed-AllViewerExceptHostHeader
-            (en-têtes dont JWT, paramètres de requête, cookies, body)
+    CloudFront (xxxx.cloudfront.net, HTTPS gratuit, redirection HTTP → HTTPS)
+    ├── origine : ALB en HTTP
+    ├── par défaut (front)  : mis en cache (CachingOptimized)
+    └── /gametracker/* (API) : jamais en cache, en-têtes/JWT/body transmis
