@@ -1,41 +1,19 @@
-aws_region   = "eu-west-3"
 project_name = "gametracker"
 environment  = "dev"
+aws_region   = "eu-west-3"
 
-vpc_cidr = "10.0.0.0/16"
+vpc_cidr                  = "10.0.0.0/16"
+public_subnet_cidrs       = ["10.0.1.0/24", "10.0.2.0/24"]
+private_app_subnet_cidrs  = ["10.0.10.0/24", "10.0.11.0/24"]
+private_data_subnet_cidrs = ["10.0.20.0/24", "10.0.21.0/24"]
+availability_zones        = ["eu-west-3a", "eu-west-3b"]
 
-availability_zones = [
-  "eu-west-3a",
-  "eu-west-3b"
-]
+spring_datasource_username = "gametracker"
+rds_password               = "MotDePasseSolide!"   # 8 à 41 caractères, sans / @ " ni espace
 
-public_subnet_cidrs = [
-  "10.0.1.0/24",
-  "10.0.2.0/24"
-]
+cloudinary_cloud_name = "..."
+cloudinary_api_key    = "..."
+cloudinary_api_secret = "..."
+jwt_secret            = "..."
 
-private_app_subnet_cidrs = [
-  "10.0.10.0/24",
-  "10.0.11.0/24"
-]
-
-private_data_subnet_cidrs = [
-  "10.0.20.0/24",
-  "10.0.21.0/24"
-]
-
-spring_datasource_url      = "jdbc:mysql://10.0.20.15:3306/db_pgt?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
-spring_datasource_username = "test"
-
-cloudinary_cloud_name = "dhaektb1h"
-cloudinary_api_key    = "766219817752778"
-
-spring_datasource_password = "test"
-mysql_root_password        = "Rafaela2003*"
-cloudinary_api_secret      = "ds8IjkifIaHsovLWU71mX9r1D_Y"
-jwt_secret                 = "YXNkZmFzZGZhc2RmYXNkZmFzZGZhc2RmYXNkZmFzZGZhc2RmYXNkZmFzZGZhc2Rm"
-
-github_repositories = [
-  "yoanlouvois/GameTrackerProject-Backend",
-  "yoanlouvois/GameTrackerProject-Frontend"
-]
+restore_db_from_snapshot = false   # passer à true après le premier destroy
