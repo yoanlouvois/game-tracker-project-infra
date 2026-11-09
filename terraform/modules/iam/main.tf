@@ -24,11 +24,6 @@ resource "aws_iam_role" "front_ec2" {
   assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
 }
 
-resource "aws_iam_role_policy_attachment" "back_ssm" {
-  role       = aws_iam_role.back_ec2.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
 resource "aws_iam_role_policy_attachment" "front_ssm" {
   role       = aws_iam_role.front_ec2.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
@@ -51,6 +46,17 @@ data "aws_iam_policy_document" "front_ec2_policy" {
     ]
 
     resources = [var.front_repository_arn]
+  }
+
+  # Transferts de fichiers d'Ansible via Session Manager
+  statement {
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject"
+    ]
+
+    resources = ["${var.ansible_bucket_arn}/*"]
   }
 }
 
@@ -76,6 +82,11 @@ resource "aws_iam_instance_profile" "front_ec2" {
 resource "aws_iam_role" "back_ec2" {
   name               = "${var.project_name}-${var.environment}-back-ec2-role"
   assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "back_ssm" {
+  role       = aws_iam_role.back_ec2.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 data "aws_iam_policy_document" "back_ec2_policy" {
@@ -115,6 +126,17 @@ data "aws_iam_policy_document" "back_ec2_policy" {
     ]
 
     resources = [var.backend_secret_arn]
+  }
+
+  # Transferts de fichiers d'Ansible via Session Manager
+  statement {
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject"
+    ]
+
+    resources = ["${var.ansible_bucket_arn}/*"]
   }
 }
 

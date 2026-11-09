@@ -17,3 +17,7 @@ variable "back_repository_arn" {
 variable "backend_secret_arn" {
   type = string
 }
+
+variable "ansible_bucket_arn" {
+  type = string
+}

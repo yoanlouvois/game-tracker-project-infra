@@ -10,6 +10,10 @@ data "aws_ecr_repository" "back" {
   name = "${var.project_name}-${var.environment}-back"
 }
 
+data "aws_s3_bucket" "ansible" {
+  bucket = "${var.project_name}-${var.environment}-mysql-backups"
+}
+
 ####################################
 # Réseau et sécurité
 ####################################
@@ -65,6 +69,7 @@ module "iam" {
   back_repository_arn  = data.aws_ecr_repository.back.arn
 
   backend_secret_arn = module.secrets.backend_secret_arn
+  ansible_bucket_arn = data.aws_s3_bucket.ansible.arn
 }
 
 ####################################
