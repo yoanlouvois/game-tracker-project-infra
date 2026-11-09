@@ -46,7 +46,7 @@ Utilisateur ──HTTPS──▶ CloudFront ──HTTP:80──▶ ALB ──▶
 | **compute** | Launch templates, 2 Auto Scaling Groups (front 2 instances, back 2 à 4) | Instances EC2 qui lancent les conteneurs Docker depuis ECR | `terraform/` |
 | **cdn** | Distribution Amazon CloudFront | HTTPS gratuit sans nom de domaine, cache du front, API non mise en cache | `terraform/` |
 | **registry** | 2 dépôts Amazon ECR (front, back) + lifecycle policies | Stockage des images Docker | `terraform-persistent/` |
-| **storage** | Bucket Amazon S3 (versioning, chiffrement, lifecycle) | Historique des sauvegardes MySQL | `terraform-persistent/` |
+| **storage** | Bucket Amazon S3 (versioning, chiffrement, lifecycle) | Transferts de fichiers d'Ansible via Session Manager (anciennement : sauvegardes MySQL) | `terraform-persistent/` |
 
 ### Choix de conception
 
@@ -73,23 +73,37 @@ GameTrackerProject-Infra/
 │   ├── outputs.tf
 │   └── providers.tf
 │
-└── terraform/                      # Stack principale : détruite en fin de séance
-    ├── main.tf
-    ├── variables.tf
-    ├── outputs.tf
-    ├── providers.tf
-    ├── terraform.tfvars            # Non versionné (contient les secrets)
-    └── modules/
-        ├── network/
-        ├── security/
-        ├── secrets/
-        ├── iam/
-        ├── database/
-        ├── load_balancing/
-        ├── compute/
-        ├── cdn/
-        ├── registry/               # Utilisé par terraform-persistent
-        └── storage/                # Utilisé par terraform-persistent
+├── terraform/                      # Stack principale : détruite en fin de séance
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   ├── providers.tf
+│   ├── terraform.tfvars.example    # Modèle à copier en terraform.tfvars
+│   ├── terraform.tfvars            # Non versionné 
+│   └── modules/
+│       ├── network/
+│       ├── security/
+│       ├── secrets/
+│       ├── iam/
+│       ├── database/
+│       ├── load_balancing/
+│       ├── compute/
+│       ├── cdn/
+│       ├── registry/               # Utilisé par terraform-persistent
+│       └── storage/                # Utilisé par terraform-persistent
+│
+└── ansible/                        # Déploiement des nouvelles versions
+    ├── ansible.cfg
+    ├── requirements.yml            # Collections amazon.aws, community.aws, community.docker
+    ├── playbook.yml
+    ├── inventory/
+    │   ├── aws_ec2.yml             # Inventaire dynamique (instances trouvées par leurs tags)
+    │   └── group_vars/
+    │       └── all.yml             # Connexion Session Manager, région, images ECR
+    └── roles/
+        ├── docker/                 # Docker démarré + login ECR
+        ├── backend/                # Secrets → pull → recréation si besoin → test :8081
+        └── frontend/               # Pull → recréation si besoin → test :80
 ```
 
 Chaque module est responsable d'une partie spécifique de l'infrastructure afin de conserver un projet modulaire, maintenable et facilement extensible.
@@ -187,25 +201,76 @@ curl -i -X POST http://localhost:8081/admin/seed/games
 
 ---
 
-## Cycle de vie
+## Ansible
 
+### Rôle d'Ansible dans le projet
 
-### Mettre à jour une image
+| Outil | Responsabilité |
+|---|---|
+| **Terraform** | Créer l'infrastructure |
+| **User data** | Configurer chaque nouvelle instance au démarrage, ce qui permet aux Auto Scaling Groups de remplacer une instance défaillante sans intervention |
+| **Ansible** | Déployer une nouvelle version sur les instances en place, sans les recréer |
 
-Après un nouveau `docker push`, remplacer les instances pour qu'elles téléchargent la nouvelle image :
+Ansible fonctionne en mode *push* : il n'agit que lorsqu'on le lance. Il ne peut donc pas configurer une instance créée automatiquement par un ASG. Ce rôle reste celui du user data.
+
+### Ce que fait le playbook
+
+1. **Inventaire dynamique** : les instances sont trouvées à chaque exécution grâce à leurs tags (`Project`, `Environment`, `Name`), puis réparties dans les groupes `front` et `back`.
+2. **Connexion via Session Manager** : pas de SSH, pas de clé, pas de port ouvert. Les fichiers temporaires d'Ansible transitent par le bucket S3.
+3. **Rôle `docker`** : vérifie que Docker tourne, puis se connecte à ECR.
+4. **Rôle `backend`** : récupère les secrets (Secrets Manager), les paramètres (SSM) et l'adresse RDS, puis les écrit dans un fichier d'environnement protégé (`/etc/gametracker/back.env`, mode 600).
+5. **Rôles `backend` et `frontend`** : téléchargent l'image `latest` et **ne recréent le conteneur que si l'image ou la configuration a changé** (idempotence), puis vérifient que l'application répond.
+6. **`serial: 1`** : une seule instance est mise à jour à la fois. L'autre continue de servir le trafic, donc il n'y a aucune interruption.
+
+### Prérequis
+
+Ansible ne fonctionne pas sous Windows : il s'utilise depuis **WSL (Ubuntu)**, avec :
+- Ansible (installé avec `pipx`) et les bibliothèques `boto3` / `botocore` ;
+- l'AWS CLI et le plugin Session Manager ;
+- les collections : `ansible-galaxy collection install -r requirements.yml`.
+
+> Le dossier `ansible/` étant sur le disque Windows, Ansible ignore son `ansible.cfg` par sécurité. Il faut l'indiquer explicitement :
+> `export ANSIBLE_CONFIG=<chemin>/ansible/ansible.cfg`
+
+### Commandes utiles
 
 ```bash
-aws autoscaling start-instance-refresh --auto-scaling-group-name gametracker-dev-back-asg --region eu-west-3
-aws autoscaling start-instance-refresh --auto-scaling-group-name gametracker-dev-front-asg --region eu-west-3
-```
-
-Pour le front, vider aussi le cache CloudFront :
-
-```bash
-aws cloudfront create-invalidation --distribution-id <ID> --paths "/*"
+cd ansible
+ansible-inventory --graph      # Lister les instances trouvées
+ansible all -m ping            # Tester la connexion
+ansible-playbook playbook.yml  # Déployer
+ansible-playbook playbook.yml -e force_recreate=true   # Forcer la recréation des conteneurs
 ```
 
 ---
+
+## Cycle de vie
+
+### Mettre à jour une image
+
+L'ordre des étapes est important :
+
+```bash
+# 1. Construire et pousser la nouvelle image
+docker build -t gametracker-front <chemin-du-front>
+docker tag gametracker-front <ACCOUNT_ID>.dkr.ecr.eu-west-3.amazonaws.com/gametracker-dev-front:latest
+docker push <ACCOUNT_ID>.dkr.ecr.eu-west-3.amazonaws.com/gametracker-dev-front:latest
+
+# 2. Déployer avec Ansible (depuis WSL)
+cd ansible
+ansible-playbook playbook.yml
+
+# 3. Front uniquement : vider le cache CloudFront, APRÈS le déploiement
+aws cloudfront create-invalidation --distribution-id <ID> --paths "/*"
+```
+
+> Si l'invalidation est faite avant le déploiement, CloudFront remet aussitôt l'ancienne version en cache.
+
+En secours, il reste possible de remplacer toutes les instances, qui retéléchargent alors l'image au démarrage :
+
+```bash
+aws autoscaling start-instance-refresh --auto-scaling-group-name gametracker-dev-front-asg --region eu-west-3
+```
 
 ## Dépôts associés
 
@@ -225,5 +290,5 @@ Application web Angular consommant les API REST du backend.
 
 ## Évolutions prévues
 
-- Configuration des instances avec **Ansible** (à la place des user data)
+- Gestion du démarrage des instances par Ansible également (`ansible-pull` dans le user data, ou AMI préconfigurée avec Packer)
 - NAT Gateway et RDS en **Multi-AZ** pour une haute disponibilité complète
