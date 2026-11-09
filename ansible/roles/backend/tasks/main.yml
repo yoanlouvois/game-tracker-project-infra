@@ -1,5 +1,5 @@
 ####################################
-# 1. Récupérer la configuration (exécuté sur ton PC)
+# 1. Récupérer la configuration
 ####################################
 
 - name: Récupérer les secrets, les paramètres SSM et l'adresse RDS
