@@ -3,3 +3,17 @@
   become: true
   roles:
     - docker
+
+- name: Déployer le back
+  hosts: back
+  become: true
+  serial: 1
+  roles:
+    - backend
+
+- name: Déployer le front
+  hosts: front
+  become: true
+  serial: 1
+  roles:
+    - frontend

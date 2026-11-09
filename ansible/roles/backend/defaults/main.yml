@@ -1,0 +1,6 @@
+back_container_name: gametracker-back
+back_port: 8081
+back_env_dir: /etc/gametracker
+back_health_path: /gametracker/v1/game/all
+db_instance_identifier: "{{ project_name }}-{{ env_name }}-db"
+force_recreate: false

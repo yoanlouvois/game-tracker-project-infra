@@ -1,0 +1,100 @@
+####################################
+# 1. Récupérer la configuration (exécuté sur ton PC)
+####################################
+
+- name: Récupérer les secrets, les paramètres SSM et l'adresse RDS
+  ansible.builtin.set_fact:
+    back_secret: "{{ lookup('amazon.aws.secretsmanager_secret', project_name ~ '/' ~ env_name ~ '/backend', region=aws_region) | from_json }}"
+    db_username: "{{ lookup('amazon.aws.ssm_parameter', '/' ~ project_name ~ '/' ~ env_name ~ '/spring/datasource/username', region=aws_region) }}"
+    cloudinary_cloud_name: "{{ lookup('amazon.aws.ssm_parameter', '/' ~ project_name ~ '/' ~ env_name ~ '/cloudinary/cloud-name', region=aws_region) }}"
+    cloudinary_api_key: "{{ lookup('amazon.aws.ssm_parameter', '/' ~ project_name ~ '/' ~ env_name ~ '/cloudinary/api-key', region=aws_region) }}"
+    db_address: "{{ lookup('ansible.builtin.pipe', 'aws rds describe-db-instances --db-instance-identifier ' ~ db_instance_identifier ~ ' --region ' ~ aws_region ~ ' --query DBInstances[0].Endpoint.Address --output text') }}"
+  run_once: true
+  no_log: true
+
+####################################
+# 2. Écrire le fichier d'environnement sur l'instance
+####################################
+
+- name: Créer le dossier de configuration
+  ansible.builtin.file:
+    path: "{{ back_env_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Écrire les variables d'environnement du back
+  ansible.builtin.copy:
+    dest: "{{ back_env_dir }}/back.env"
+    mode: "0600"
+    content: |
+      SPRING_DATASOURCE_URL=jdbc:mysql://{{ db_address }}:3306/db_pgt?sslMode=REQUIRED&serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME={{ db_username }}
+      SPRING_DATASOURCE_PASSWORD={{ back_secret.SPRING_DATASOURCE_PASSWORD }}
+      CLOUDINARY_CLOUD_NAME={{ cloudinary_cloud_name }}
+      CLOUDINARY_API_KEY={{ cloudinary_api_key }}
+      CLOUDINARY_API_SECRET={{ back_secret.CLOUDINARY_API_SECRET }}
+      JWT_SECRET={{ back_secret.JWT_SECRET }}
+  register: back_env_file
+  no_log: true
+
+####################################
+# 3. Télécharger l'image et la comparer au conteneur en cours
+####################################
+
+- name: Télécharger l'image du back
+  ansible.builtin.command: docker pull {{ back_image }}
+  register: back_pull
+  changed_when: "'Downloaded newer image' in back_pull.stdout"
+
+- name: Lire l'ID de l'image téléchargée
+  ansible.builtin.command: docker image inspect --format {% raw %}'{{.Id}}'{% endraw %} {{ back_image }}
+  register: back_latest_id
+  changed_when: false
+
+- name: Lire l'ID de l'image du conteneur en cours (s'il existe)
+  ansible.builtin.command: docker inspect --format {% raw %}'{{.Image}}'{% endraw %} {{ back_container_name }}
+  register: back_running_id
+  changed_when: false
+  failed_when: false
+
+####################################
+# 4. Recréer le conteneur si nécessaire
+####################################
+
+- name: Recréer le conteneur du back
+  ansible.builtin.shell: |
+    docker rm -f {{ back_container_name }} || true
+    docker run -d \
+      --name {{ back_container_name }} \
+      --restart=always \
+      -p {{ back_port }}:{{ back_port }} \
+      --env-file {{ back_env_dir }}/back.env \
+      {{ back_image }}
+  when: >
+    back_running_id.rc != 0
+    or back_running_id.stdout != back_latest_id.stdout
+    or back_env_file.changed
+    or force_recreate | bool
+
+####################################
+# 5. Vérifier que le back répond
+####################################
+
+- name: Attendre que le port {{ back_port }} soit ouvert
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ back_port }}"
+    timeout: 180
+
+- name: Vérifier que l'API répond
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ back_port }}{{ back_health_path }}"
+    status_code: 200
+  register: back_health
+  retries: 12
+  delay: 10
+  until: back_health.status == 200
+
+- name: Supprimer les anciennes images inutilisées
+  ansible.builtin.command: docker image prune -f
+  changed_when: false

@@ -1,0 +1,47 @@
+- name: Télécharger l'image du front
+  ansible.builtin.command: docker pull {{ front_image }}
+  register: front_pull
+  changed_when: "'Downloaded newer image' in front_pull.stdout"
+
+- name: Lire l'ID de l'image téléchargée
+  ansible.builtin.command: docker image inspect --format {% raw %}'{{.Id}}'{% endraw %} {{ front_image }}
+  register: front_latest_id
+  changed_when: false
+
+- name: Lire l'ID de l'image du conteneur en cours (s'il existe)
+  ansible.builtin.command: docker inspect --format {% raw %}'{{.Image}}'{% endraw %} {{ front_container_name }}
+  register: front_running_id
+  changed_when: false
+  failed_when: false
+
+- name: Recréer le conteneur du front
+  ansible.builtin.shell: |
+    docker rm -f {{ front_container_name }} || true
+    docker run -d \
+      --name {{ front_container_name }} \
+      --restart=always \
+      -p {{ front_port }}:80 \
+      {{ front_image }}
+  when: >
+    front_running_id.rc != 0
+    or front_running_id.stdout != front_latest_id.stdout
+    or force_recreate | bool
+
+- name: Attendre que le port {{ front_port }} soit ouvert
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ front_port }}"
+    timeout: 60
+
+- name: Vérifier que le front répond
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ front_port }}/"
+    status_code: 200
+  register: front_health
+  retries: 6
+  delay: 5
+  until: front_health.status == 200
+
+- name: Supprimer les anciennes images inutilisées
+  ansible.builtin.command: docker image prune -f
+  changed_when: false
