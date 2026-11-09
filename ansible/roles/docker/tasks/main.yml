@@ -1,0 +1,17 @@
+- name: Installer Docker
+  ansible.builtin.dnf:
+    name: docker
+    state: present
+
+- name: Démarrer Docker et l'activer au démarrage
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Se connecter au registre ECR (via le rôle IAM de l'instance)
+  ansible.builtin.shell: >
+    aws ecr get-login-password --region {{ aws_region }}
+    | docker login --username AWS --password-stdin {{ ecr_registry }}
+  changed_when: false
+  no_log: true

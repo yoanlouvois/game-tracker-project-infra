@@ -1,0 +1,23 @@
+plugin: amazon.aws.aws_ec2
+
+regions:
+  - eu-west-3
+
+# Seules les instances du projet, en cours d'exécution
+filters:
+  tag:Project: gametracker
+  tag:Environment: dev
+  instance-state-name: running
+
+# Chaque machine est identifiée par son ID d'instance
+hostnames:
+  - instance-id
+
+# Session Manager se connecte grâce à l'ID d'instance
+compose:
+  ansible_host: instance_id
+
+# Deux groupes, selon le tag Name posé par les launch templates
+groups:
+  front: ec2_tags.Name == 'gametracker-dev-front'
+  back: ec2_tags.Name == 'gametracker-dev-back'

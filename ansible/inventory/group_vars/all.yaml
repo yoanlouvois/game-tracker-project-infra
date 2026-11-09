@@ -1,0 +1,16 @@
+# Connexion via Session Manager au lieu de SSH
+ansible_connection: community.aws.aws_ssm
+ansible_aws_ssm_region: eu-west-3
+ansible_aws_ssm_bucket_name: gametracker-dev-mysql-backups
+ansible_aws_ssm_s3_addressing_style: virtual
+
+# Variables du projet (utilisées par les rôles)
+project_name: gametracker
+env_name: dev
+aws_region: eu-west-3
+
+# Registre ECR et images
+aws_account_id: "147914447581"
+ecr_registry: "{{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com"
+front_image: "{{ ecr_registry }}/{{ project_name }}-{{ env_name }}-front:latest"
+back_image: "{{ ecr_registry }}/{{ project_name }}-{{ env_name }}-back:latest"
