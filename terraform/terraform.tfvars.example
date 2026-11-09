@@ -1,0 +1,35 @@
+aws_region   = "eu-west-3"
+project_name = "gametracker"
+environment  = "dev"
+
+vpc_cidr = "10.0.0.0/16"
+
+availability_zones = [
+  "eu-west-3a",
+  "eu-west-3b"
+]
+
+public_subnet_cidrs = [
+  "10.0.1.0/24",
+  "10.0.2.0/24"
+]
+
+private_app_subnet_cidrs = [
+  "10.0.10.0/24",
+  "10.0.11.0/24"
+]
+
+private_data_subnet_cidrs = [
+  "10.0.20.0/24",
+  "10.0.21.0/24"
+]
+
+spring_datasource_username = "<votre_secret>"
+
+cloudinary_cloud_name = "<votre_secret>"
+cloudinary_api_key    = "<votre_secret>"
+
+cloudinary_api_secret      = "<votre_secret>"
+jwt_secret                 = "<votre_secret>"
+
+rds_password = "<votre_mdp>"
